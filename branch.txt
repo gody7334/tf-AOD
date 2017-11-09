@@ -1,0 +1,7 @@
+AOD-001: impliment: RL policy graident, Attention layer, RoI pooling layer,33
+         Use tf.scatter_update therefore, the gradient is trackable
+         Q: how to compute loss using python function?
+AOD-002: create a function call get_losses() that seperates
+         from build_model() to summerize each loss as we want
+         to experitment different losses combination
+AOD-003:
