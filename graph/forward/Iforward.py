@@ -50,6 +50,10 @@ class IForward(object):
         # A float32 Tensor with shape [batch_size * padded_length].
         self.target_smooth_l1_losses_weights = None  # Used in evaluation.
 
+        # inception model's graph
+        self.inception_output = None
+        self.inception_end_points = None
+
         # initializer
         self.initializer = tf.random_uniform_initializer(
             minval=-self.config.initializer_scale,
@@ -83,6 +87,28 @@ class IForward(object):
             collections=[tf.GraphKeys.GLOBAL_STEP, tf.GraphKeys.GLOBAL_VARIABLES])
 
         self.global_step = global_step
+
+    def build_image_embeddings(self):
+        """Builds the image model subgraph and generates image embeddings.
+           pass image into inceptionV3 and get image features map (add full connected layer at the end)
+        Inputs:
+          self.images
+
+        Outputs:
+          self.image_embeddings
+        """
+        inception_output, inception_end_points = image_embedding.inception_v3(
+            self.images,
+            trainable=self.train_inception,
+            is_training=self.is_training())
+        self.inception_variables = tf.get_collection(
+            tf.GraphKeys.GLOBAL_VARIABLES, scope="InceptionV3")
+
+        self.inception_output = inception_output
+        self.inception_end_points = inception_end_points
+
+        # Save the embedding size in the graph.
+        tf.constant(self.config.embedding_size, name="embedding_size")
 
     def _smooth_l1_loss(
             self,

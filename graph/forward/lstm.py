@@ -18,8 +18,6 @@ class LSTM(IForward):
     def __init__(self, mode, data):
         IForward.__init__(self, mode, data)
 
-        self.inception_output = None
-        self.inception_end_points = None
         self.initial_state = None
         self.sequence_length = None
         self.lstm_outputs = None
@@ -40,15 +38,8 @@ class LSTM(IForward):
         Outputs:
           self.image_embeddings
         """
-        inception_output, inception_end_points = image_embedding.inception_v3(
-            self.images,
-            trainable=self.train_inception,
-            is_training=self.is_training())
-        self.inception_variables = tf.get_collection(
-            tf.GraphKeys.GLOBAL_VARIABLES, scope="InceptionV3")
 
-        self.inception_output = inception_output
-        self.inception_end_points = inception_end_points
+        super(LSTM, self).build_image_embeddings()
 
         # TOOD experiement different layer
         # post pocessing different layer output before fc layer
@@ -64,7 +55,10 @@ class LSTM(IForward):
         # reduce dimension using fc, later lstm layer
         # also apply linear transformation to get initial 'h' and 'c'
         # Map inception output into embedding space.
-        inception_output = tf.reshape(inception_end_points['MaxPool_3a_3x3'], [self.config.batch_size, -1])
+
+        # call parent function to get original image features map
+
+        inception_output = tf.reshape(self.inception_end_points['MaxPool_3a_3x3'], [self.config.batch_size, -1])
         with tf.variable_scope("image_embedding") as scope:
           image_embeddings = tf.contrib.layers.fully_connected(
               inputs=inception_output,
@@ -73,9 +67,6 @@ class LSTM(IForward):
               weights_initializer=self.initializer,
               biases_initializer=None,
               scope=scope)
-
-        # Save the embedding size in the graph.
-        tf.constant(self.config.embedding_size, name="embedding_size")
 
         self.image_embeddings = image_embeddings
 

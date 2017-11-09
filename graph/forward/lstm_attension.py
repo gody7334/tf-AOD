@@ -59,8 +59,6 @@ class LSTM_Attension(IForward):
         # self.captions = tf.placeholder(tf.int32, [None, self.T + 1])
         self.features = None
         self.captions = None
-        self.inception_output = None
-        self.inception_end_points = None
         self.logits = None
         self.targets = None
         self.weights = None
@@ -77,21 +75,11 @@ class LSTM_Attension(IForward):
         Outputs:
           self.image_embeddings
         """
-        inception_output, inception_end_points = image_embedding.inception_v3(
-            self.images,
-            trainable=self.train_inception,
-            is_training=self.is_training())
-        self.inception_variables = tf.get_collection(
-            tf.GraphKeys.GLOBAL_VARIABLES, scope="InceptionV3")
-
-        self.inception_output = inception_output
-        self.inception_end_points = inception_end_points
-
-        # Save the embedding size in the graph.
-        tf.constant(self.config.embedding_size, name="embedding_size")
+        # call parent function to get original image features map
+        super(LSTM_Attension, self).build_image_embeddings()
 
         # TOOD experiement different layer
-        inception_layer = inception_end_points['Mixed_7c']
+        inception_layer = self.inception_end_points['Mixed_7c']
         # get depth of image embedded
         layer_shape = inception_layer.get_shape().as_list()
         self.D = layer_shape[3]
