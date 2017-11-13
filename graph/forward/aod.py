@@ -160,9 +160,10 @@ class LSTM_Attension(IForward):
         with tf.variable_scope('attension_region_proposal_layer'):
             if(first==True):
                 # first set don't have baseline, mean_loc, sample_loc
-                # Todo: use tile to create first rp
-                rp_tf = tf.convert_to_tensor(self.first_rp,dtype=tf.float32)
-                return rp_tf
+                rp = np.array([0.0,0.0,1.0,1.0])
+                rp = tf.expand_dims(tf.convert_to_tensor(rp),0)
+                rps = tf.tile(rp_tf,[self.config.batch_size])
+                return rps
             else:
                 baseline_w = tf.get_variable('baseline_w', [self.H, self.B],initializer=self.weight_initializer)
                 baseline_b = tf.get_variable('baseline_b', [self.B], initializer=self.const_initializer)
