@@ -2,9 +2,12 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import numpy as np
 from pprint import pprint
 import tensorflow as tf
 import tensorflow.contrib.slim as slim
+from utils.roi_pooling_layer import roi_pooling_op
+from utils.roi_pooling_layer import roi_pooling_op_grad
 import ipdb
 
 from utils.config import global_config
@@ -52,53 +55,48 @@ class LSTM_Attension(IForward):
         self.M = 512 # word embedded
         self.H = self.config.num_lstm_units # hidden stage
         self.T = 4 # Time step size of LSTM (how many predicting bboxes in a image)
-
+        self.B = 4 # bbox dimension
 
         # Place holder for features and captions
         # self.features = tf.placeholder(tf.float32, [None, self.L, self.D])
         # self.captions = tf.placeholder(tf.int32, [None, self.T + 1])
         self.features = None
         self.captions = None
-        self.inception_output = None
-        self.inception_end_points = None
         self.logits = None
         self.targets = None
         self.weights = None
 
+        self.loc_sd = 0.11
+        self.first_rp = None
+        self.baselines = []
+        self.mean_locs = []
+        self.sampled_locs = []
+        self.logits = []
+
+        self._gen_first_region_proposal()
         self.build_image_embeddings()
         self.build_model()
 
     def build_image_embeddings(self):
-        """Builds the image model subgraph and generates image embeddings.
-           pass image into inceptionV3 and get image features map (add full connected layer at the end)
+        """ Load inception V3 graph (IForward) and post process the image feature map
         Inputs:
           self.images
-
         Outputs:
           self.image_embeddings
         """
-        inception_output, inception_end_points = image_embedding.inception_v3(
-            self.images,
-            trainable=self.train_inception,
-            is_training=self.is_training())
-        self.inception_variables = tf.get_collection(
-            tf.GraphKeys.GLOBAL_VARIABLES, scope="InceptionV3")
-
-        self.inception_output = inception_output
-        self.inception_end_points = inception_end_points
-
-        # Save the embedding size in the graph.
-        tf.constant(self.config.embedding_size, name="embedding_size")
+        # call parent function to get original image features map
+        super(LSTM_Attension, self).build_image_embeddings()
 
         # TOOD experiement different layer
-        inception_layer = inception_end_points['Mixed_7c']
+        inception_layer = self.inception_end_points['Mixed_7c']
+
         # get depth of image embedded
         layer_shape = inception_layer.get_shape().as_list()
         self.D = layer_shape[3]
         self.L = layer_shape[1]*layer_shape[2]
-        # flatten image pixel from 2D to 1D
-        self.image_embeddings = tf.reshape(inception_layer, [self.config.batch_size, self.L, self.D])
-        self.features = self.image_embeddings
+
+        # RoI pooling need to retain W,H dim, no reshape needed
+        self.features = inception_layer
 
     def build_seq_embeddings(self):
         return
@@ -149,6 +147,68 @@ class LSTM_Attension(IForward):
             context = tf.reduce_sum(features * tf.expand_dims(alpha, 2), 1, name='context')  # (N, D)
             return context, alpha
 
+    def _gen_first_region_proposal():
+        # first region proposals are n * (0,0,1,1)
+        batch_size = self.config.batch_size
+        rp_array = []
+        for i in range(batch_size):
+            rp = np.array([0.0,0.0,1.0,1.0])
+            rp_array.append(rp)
+        self.first_rp = np.array(rp_array)
+
+    def _attension_region_proposal_layer(self, h, first=False):
+        with tf.variable_scope('attension_region_proposal_layer'):
+            if(first==True):
+                # first set don't have baseline, mean_loc, sample_loc
+                # Todo: use tile to create first rp
+                rp_tf = tf.convert_to_tensor(self.first_rp,dtype=tf.float32)
+                return rp_tf
+            else:
+                baseline_w = tf.get_variable('baseline_w', [self.H, self.B],initializer=self.weight_initializer)
+                baseline_b = tf.get_variable('baseline_b', [self.B], initializer=self.const_initializer)
+                mean_w = tf.get_variable('mean_w', [self.H, self.B],initializer=self.weight_initializer)
+
+                # train a baseline_beline function
+                baseline = tf.sigmoid(tf.matmul(h,baseline_w)+baseline_b)
+                self.baselines.append(baseline)
+
+                # compute next location
+                mean_loc = tf.matmul(h,mean_w)
+                mean_loc = tf.stop_gradient(mean_loc)
+                self.mean_locs.append(mean_loc)
+
+                # add noise - sample from guassion distribution to decide the mean_loc vs sample_los is good or bad
+                sample_loc = tf.maximum(-1.0, tf.minimum(1.0, mean_loc + tf.random_normal(mean_loc.get_shape(), 0, self.loc_sd)))
+                sample_loc = tf.stop_gradient(sample_loc)
+                self.sampled_locs.append(sample_loc)
+
+                return sample_loc
+
+    def _ROI_pooling_layer(self, features, region_proposal):
+        # convert from (0-1) to int coordinate
+        # region_proposal [n,4]
+        feature_shape = features.get_shape().as_list()
+        nn = feature_shape[0]
+        ww = feature_shape[1]
+        hh = feature_shape[2]
+        dd = feature_shape[3]
+        xmin = tf.slice(region_proposal, [0,0],[-1,0])
+        ymin = tf.slice(region_proposal, [0,0],[-1,0])
+        w = tf.slice(region_proposal, [0,0],[-1,0])
+        h = tf.slice(region_proposal, [0,0],[-1,0])
+        xmax = xmin+w
+        ymax = ymin+h
+        n_idx = tf.range(nn)
+        xmin = tf.floor(xmin*ww) #(n,1)
+        ymin = tf.floor(ymin*hh) #(n,1)
+        xmax = tf.ceil(xmax*ww)  #(n,1)
+        ymax = tf.ceil(ymax*hh)  #(n,1)
+        rois = tf.concat([n_idx,xmin,ymin,xmax,ymax],1) #(n,5)
+
+        [y, argmax] = roi_pooling_op.roi_pool(features, rois, 7, 7, 1.0/3)
+
+        return y
+
     def _selector(self, context, h, reuse=False):
         with tf.variable_scope('selector', reuse=reuse):
             w = tf.get_variable('w', [self.H, 1], initializer=self.weight_initializer)
@@ -191,8 +251,7 @@ class LSTM_Attension(IForward):
                                             scope=(name + 'batch_norm'))
 
     def build_model(self):
-        features = self.features
-
+        features = self.features    #(N,W,H,D)
         batch_size = tf.shape(self.features)[0]
 
         captions_in = self.input_seqs
