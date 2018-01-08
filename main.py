@@ -47,7 +47,6 @@ def clean_folder(folder_dir):
             #elif os.path.isdir(file_path): shutil.rmtree(file_path)
         except Exception as e:
             print(e)
-
 if __name__ == '__main__':
     main()
     # prepare_dataset()

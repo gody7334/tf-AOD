@@ -26,7 +26,7 @@ class Build_Data(object):
             maxval=self.config.initializer_scale)
 
         self.encoded_image = None
-        
+
         # A float32 Tensor with shape [batch_size, height, width, channels].
         self.images = None
 
@@ -39,10 +39,22 @@ class Build_Data(object):
         # An int32 0/1 Tensor with shape [batch_size, padded_length].
         self.input_mask = None
 
+        # An int32 Tensor with shape [batch_size, padded_length].
+        self.bbox_seqs = None
+
+        # An int32 Tensor with shape [batch_size, padded_length].
+        self.class_seqs = None
+
+        # An int32 0/1 Tensor with shape [batch_size, padded_length].
+        self.bbox_mask = None
+
+        # An int32 0/1 Tensor with shape [batch_size, padded_length].
+        self.class_mask = None
+
         self.bbox = None
-        
+
         self.scale_bbox = None
-        
+
         self.build_inputs()
 
 
@@ -50,7 +62,7 @@ class Build_Data(object):
         """Returns true if the model is built for training mode."""
         return self.mode == "train"
 
-    def process_image(self, encoded_image, origin_bbox, thread_id=0):
+    def process_image(self, encoded_image, origin_bbox, classes, thread_id=0):
         """Decodes and processes an image string.
 
         Args:
@@ -63,6 +75,7 @@ class Build_Data(object):
         """
         return image_processing.process_image(encoded_image,
                                               origin_bbox,
+                                              classes,
                                               is_training=self.is_training(),
                                               height=self.config.image_height,
                                               width=self.config.image_width,
@@ -115,40 +128,49 @@ class Build_Data(object):
             # type(serialized_sequence_example) == Tensor
             # threads that get tf record from queue
             serialized_sequence_example = input_queue.dequeue()
-            
+
             # print num of element left in input_queue
             # serialized_sequence_example = tf.Print(serialized_sequence_example, data=[input_queue.size()], message="Nb elements left, queue size:")
-            
+
             # get each element tensor from tensor
-            encoded_image, bbox = input_ops.parse_sequence_example(
+            encoded_image, bbox, classes = input_ops.parse_sequence_example(
                 serialized_sequence_example,
                 image_feature=self.config.image_feature_name,
-                caption_feature=self.config.bbox_feature_name)
+                bbox_feature=self.config.bbox_feature_name,
+                class_feature=self.config.class_feature_name)
             self.encoded_image = encoded_image
             # decode image
-            image, scale_bbox = self.process_image(encoded_image, bbox, thread_id=thread_id)
-            
+            image, scale_bbox, classes = self.process_image(encoded_image, bbox, classes, thread_id=thread_id)
+
             '''
             TODO resize bbox!!!
             '''
-            
+
             # append to small batch (thread number)
-            images_and_bboxs.append([image, scale_bbox])
+            images_and_bboxs.append([image, scale_bbox, classes])
 
           # Batch inputs.
           queue_capacity = (2 * self.config.num_preprocess_threads *
                             self.config.batch_size)
-          images, input_seqs, target_seqs, input_mask = (
+
+          images, bbox_seqs, class_seqs, bbox_mask, class_mask = (
               input_ops.batch_with_dynamic_pad(images_and_bboxs,
                                               batch_size=self.config.batch_size,
                                               queue_capacity=queue_capacity))
-        
+
+          # images, bbox_seqs, class_seqs, bbox_mask, class_mask = (
+              # input_ops.batch_with_static_pad_or_crop(images_and_bboxs,
+                                              # batch_size=self.config.batch_size,
+                                              # target_length=self.config.target_length,
+                                              # queue_capacity=queue_capacity))
+
         bbox = tf.Print(bbox,[bbox])
         self.bbox = bbox
         scale_bbox = tf.Print(scale_bbox,[scale_bbox])
         self.scale_bbox = scale_bbox
-        
+
         self.images = images
-        self.input_seqs = input_seqs
-        self.target_seqs = target_seqs
-        self.input_mask = input_mask
+        self.class_seqs = class_seqs
+        self.bbox_seqs = bbox_seqs
+        self.class_mask = class_mask
+        self.bbox_mask = bbox_mask

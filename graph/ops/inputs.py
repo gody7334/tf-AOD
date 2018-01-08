@@ -18,12 +18,15 @@
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
+from tensorflow.python.framework import ops
+from tensorflow.python.ops import variables
+from tensorflow.python.ops import math_ops
 
 
 import tensorflow as tf
 
 
-def parse_sequence_example(serialized, image_feature, caption_feature):
+def parse_sequence_example(serialized, image_feature, bbox_feature, class_feature):
   """Parses a tensorflow.SequenceExample into an image and caption.
 
   Args:
@@ -43,12 +46,15 @@ def parse_sequence_example(serialized, image_feature, caption_feature):
           image_feature: tf.FixedLenFeature([], dtype=tf.string)
       },
       sequence_features={
-          caption_feature: tf.FixedLenSequenceFeature([4], dtype=tf.float32),
-      })
+          bbox_feature: tf.FixedLenSequenceFeature([4], dtype=tf.float32),
+          class_feature: tf.FixedLenSequenceFeature([1], dtype=tf.int64)
+      }
+  )
 
   encoded_image = context[image_feature]
-  caption = sequence[caption_feature]
-  return encoded_image, caption
+  bbox = sequence[bbox_feature]
+  classes = sequence[class_feature]
+  return encoded_image, bbox, classes
 
 
 def prefetch_input_data(reader,
@@ -95,20 +101,20 @@ def prefetch_input_data(reader,
                     len(data_files), file_pattern)
 
   """
-  Queues are a convenient TensorFlow mechanism to compute tensors 
-  asynchronously using multiple threads. For example in the canonical 
-  'Input Reader' setup one set of threads generates filenames in a queue; 
-  a second set of threads read records from the files, processes them, 
-  and enqueues tensors on a second queue; a third set of threads dequeues 
-  these input records to construct batches and runs them through training 
+  Queues are a convenient TensorFlow mechanism to compute tensors
+  asynchronously using multiple threads. For example in the canonical
+  'Input Reader' setup one set of threads generates filenames in a queue;
+  a second set of threads read records from the files, processes them,
+  and enqueues tensors on a second queue; a third set of threads dequeues
+  these input records to construct batches and runs them through training
   operations.
   """
-  
+
   if is_training:
     # create a queue to store filenames (string)
     filename_queue = tf.train.string_input_producer(
         data_files, shuffle=True, capacity=16, name=shard_queue_name)
-        
+
     # calculate min capacity and capacity
     min_queue_examples = values_per_shard * input_queue_capacity_factor
     capacity = min_queue_examples + 100 * batch_size
@@ -132,7 +138,7 @@ def prefetch_input_data(reader,
     _, value = reader.read(filename_queue)
     # values_queue.enqueue is a enqueue operation put value into values_queue
     enqueue_ops.append(values_queue.enqueue([value]))
-    
+
   # values_queue: a queue, enqueue_ops: is a operation on values_queue
   tf.train.queue_runner.add_queue_runner(tf.train.queue_runner.QueueRunner(
       values_queue, enqueue_ops))
@@ -142,8 +148,62 @@ def prefetch_input_data(reader,
 
   return values_queue
 
+def crop_pad_label(label, target_length, pad_value=0):
+    '''
+    crop or pad label into fix length for rnn batch training
 
-def batch_with_dynamic_pad(images_and_captions,
+    @ param
+    label (T,?), should provide T
+    target_lengt
+    pad_value
+
+    @ return
+    label (target_length, ?)
+    '''
+
+    def _is_tensor(x):
+        """Returns `True` if `x` is a symbolic tensor-like object.
+        Args:     x: A python object to check.
+        Returns:     `True` if `x` is a `tf.Tensor` or `tf.Variable`, otherwise `False`.
+        """
+        return isinstance(x, (ops.Tensor, variables.Variable))
+
+    def max_(x, y):
+        if _is_tensor(x) or _is_tensor(y):
+            return math_ops.maximum(x, y)
+        else:
+            return max(x, y)
+
+    def min_(x, y):
+        if _is_tensor(x) or _is_tensor(y):
+            return math_ops.minimum(x, y)
+        else:
+            return min(x, y)
+
+    def equal_(x, y):
+        if _is_tensor(x) or _is_tensor(y):
+            return math_ops.equal(x, y)
+        else:
+            return x == y
+
+    label = tf.cond(tf.rank(label) < 2,
+            lambda: tf.expand_dims(label,1),
+            lambda: tf.identity(label))
+
+    # maybe crop
+    label_length = tf.shape(label)[0]
+    label = tf.slice(label, [0,0], [min_(label_length, target_length),-1])
+
+    #maybe pad
+    diff = tf.subtract(target_length,label_length)
+    num_pad = max_(diff,0)
+    padding = tf.stack([[0,num_pad],[0,0]])
+    label = tf.pad(label,padding)
+
+    return label
+
+
+def batch_with_dynamic_pad(images_and_bboxs,
                            batch_size,
                            queue_capacity,
                            add_summaries=True):
@@ -199,17 +259,13 @@ def batch_with_dynamic_pad(images_and_captions,
     mask: An int32 0/1 Tensor of shape [batch_size, padded_length].
   """
   enqueue_list = []
-  for image, caption in images_and_captions:
-    caption_length = tf.shape(caption)[0]
-    input_length = tf.subtract(caption_length,1)
-    # input_length = tf.expand_dims(tf.subtract(caption_length, 1), 0)
+  for image, bboxes, classes in images_and_bboxs:
+    bboxes_length = tf.shape(bboxes)[0]
+    bbox_indicator = tf.ones([bboxes_length,4], dtype=tf.int32)
+    class_indicator = tf.ones([bboxes_length], dtype=tf.int32)
+    enqueue_list.append([image, bboxes, tf.squeeze(classes,[1]), bbox_indicator, class_indicator])
 
-    input_seq = tf.slice(caption, [0,0], [input_length,4])
-    target_seq = tf.slice(caption, [1,0], [input_length,4])
-    indicator = tf.ones([input_length,4], dtype=tf.int32)
-    enqueue_list.append([image, input_seq, target_seq, indicator])
-
-  images, input_seqs, target_seqs, mask = tf.train.batch_join(
+  images, bbox_seqs, class_seqs, bbox_mask, class_mask = tf.train.batch_join(
       enqueue_list,
       batch_size=batch_size,
       capacity=queue_capacity,
@@ -217,9 +273,90 @@ def batch_with_dynamic_pad(images_and_captions,
       name="batch_and_pad")
 
   if add_summaries:
-    lengths = tf.add(tf.reduce_sum(mask, 1), 1)
+    lengths = tf.add(tf.reduce_sum(bbox_mask, 1), 1)
     tf.summary.scalar("caption_length/batch_min", tf.reduce_min(lengths))
     tf.summary.scalar("caption_length/batch_max", tf.reduce_max(lengths))
     tf.summary.scalar("caption_length/batch_mean", tf.reduce_mean(lengths))
 
-  return images, input_seqs, target_seqs, mask
+  return images, bbox_seqs, class_seqs, bbox_mask, class_mask
+
+def batch_with_static_pad_or_crop(images_and_bboxs,
+                           batch_size,
+                           target_length,
+                           queue_capacity,
+                           add_summaries=True):
+  """Batches input images and captions.
+
+  This function splits the caption into an input sequence and a target sequence,
+  where the target sequence is the input sequence right-shifted by 1. Input and
+  target sequences are batched and padded up to the maximum length of sequences
+  in the batch. A mask is created to distinguish real words from padding words.
+
+  Example:
+    Actual captions in the batch ('-' denotes padded character):
+      [
+        [ 1 2 5 4 5 ],
+        [ 1 2 3 4 - ],
+        [ 1 2 3 - - ],
+      ]
+
+    input_seqs:
+      [
+        [ 1 2 3 4 ],
+        [ 1 2 3 - ],
+        [ 1 2 - - ],
+      ]
+
+    target_seqs:
+      [
+        [ 2 3 4 5 ],
+        [ 2 3 4 - ],
+        [ 2 3 - - ],
+      ]
+
+    mask:
+      [
+        [ 1 1 1 1 ],
+        [ 1 1 1 0 ],
+        [ 1 1 0 0 ],
+      ]
+
+  Args:
+    images_and_captions: A list of pairs [image, caption], where image is a
+      Tensor of shape [height, width, channels] and caption is a 1-D Tensor of
+      any length. Each pair will be processed and added to the queue in a
+      separate thread.
+    batch_size: Batch size.
+    queue_capacity: Queue capacity.
+    add_summaries: If true, add caption length summaries.
+
+  Returns:
+    images: A Tensor of shape [batch_size, height, width, channels].
+    input_seqs: An int32 Tensor of shape [batch_size, padded_length].
+    target_seqs: An int32 Tensor of shape [batch_size, padded_length].
+    mask: An int32 0/1 Tensor of shape [batch_size, padded_length].
+  """
+  enqueue_list = []
+  for image, bboxes, classes in images_and_bboxs:
+    # Pad to fix length as attention model with rnn can(should) have fixed time step.
+    bbox_seq = crop_pad_label(bboxes,target_length,0)
+    class_seq = tf.squeeze(crop_pad_label(classes,target_length,-1),[1])
+    bboxes_length = tf.shape(bboxes)[0]
+    bbox_indicator = tf.ones([bboxes_length,4],dtype=tf.int32)
+    class_indicator = tf.ones([bboxes_length], dtype = tf.int32)
+    enqueue_list.append([image, bbox_seq, class_seq, bbox_indicator, class_indicator])
+
+  images, bbox_seqs, class_seqs, bbox_mask, class_mask = tf.train.batch_join(
+      enqueue_list,
+      batch_size=batch_size,
+      capacity=queue_capacity,
+      dynamic_pad=True,
+      name="batch_and_pad")
+
+  if add_summaries:
+    lengths = tf.add(tf.reduce_sum(bbox_mask, 1), 1)
+    tf.summary.scalar("caption_length/batch_min", tf.reduce_min(lengths))
+    tf.summary.scalar("caption_length/batch_max", tf.reduce_max(lengths))
+    tf.summary.scalar("caption_length/batch_mean", tf.reduce_mean(lengths))
+
+  return images, bbox_seqs, class_seqs, bbox_mask, class_mask

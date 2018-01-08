@@ -4,12 +4,14 @@ from __future__ import print_function
 
 import tensorflow as tf
 import time
+import numpy as np
 
 # get parsing argument
 from utils.config import global_config
 from graph.build_data import Build_Data
 from graph.forward.lstm import LSTM
 from graph.forward.lstm_attension import LSTM_Attension
+from graph.forward.aod import AOD
 from graph.backward import Backward
 from control.prepare_dataset import PrepareDataset
 
@@ -46,7 +48,8 @@ class Train(object):
             self.data = data
 
             # model = LSTM(mode='train',data=data)
-            model = LSTM_Attension(mode='train',data=data)
+            # model = LSTM_Attension(mode='train',data=data)
+            model =AOD(mode='train',data=data)
             self.model = model
 
             optimize = Backward(model = model)
@@ -113,23 +116,49 @@ class Train(object):
             from pprint import pprint as pp
             pause = 1.0
             while(True):
-                # print(sess.run(self.model.input_mask))
-                # print(sess.run(self.model.sequence_length))
-                # print(sess.run(self.model.lstm_outputs))
+                ipdb.set_trace()
+
                 tvars = tf.trainable_variables()
                 tvars_vals = sess.run(tvars)
-                pp(tvars_vals[0])
+                pp(tvars_vals[5])
+                pp(np.amax(tvars_vals[5],axis=1))
+                time.sleep(pause)
+                pp(np.amax(tvars_vals[5]))
                 time.sleep(pause)
 
-                print(sess.run(self.model.logits))
-                time.sleep(pause)
-                print(sess.run(self.model.total_loss))
-                time.sleep(pause)
-                print(sess.run(self.optimize.train_op))
-                time.sleep(pause)
+                # print(sess.run(self.model.region_proposals))
+                # time.sleep(pause)
+                # print(sess.run(self.model.glimpses))
+                # time.sleep(pause)
+                # print(sess.run(self.model.glimpses_project))
+                # time.sleep(pause)
+                # print(sess.run(self.model.logits))
+                # time.sleep(pause)
+
+                # print(sess.run(self.model.logits))
+                # time.sleep(pause)
+                # print(sess.run(self.model.total_loss))
+                # time.sleep(pause)
                 # print(sess.run(self.model.targets))
                 # print(sess.run(self.model.weights))
-                # print(sess.run(self.data.target_seqs))
-                # print(sess.run(self.data.input_mask))
+                # print(sess.run(self.data.bbox_seqs))
+                # print(sess.run(self.data.class_seqs))
+                # print(sess.run(self.data.bbox_mask))
+                # print(sess.run(self.data.class_mask))
+                # print(sess.run(self.model.predict_bbox))
+                # print(sess.run(self.model.predict_class_logit))
+                # print(sess.run(self.model.rois))
+                # print(sess.run(self.model.predict_bbox_full))
+                # print(sess.run(self.model.iouses))
+                # print(sess.run(self.model.argmax_ious))
+                # print(sess.run(self.model.target_class))
+                # print(sess.run(self.model.target_bbox))
+                print(sess.run(self.model.class_losses))
+                print(sess.run(self.model.bbox_losses))
+                print(sess.run(self.model.policy_losses))
+                print(sess.run(self.model.batch_loss))
+
+                print(sess.run(self.optimize.train_op))
+                time.sleep(pause)
 
             sess.close()

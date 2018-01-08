@@ -84,6 +84,7 @@ def draw_tf_bounding_boxes(images, scale_bboxes, name=""):
 
 def process_image(encoded_image,
                   origin_bbox,
+                  classes,
                   is_training,
                   height,
                   width,
@@ -176,5 +177,5 @@ def process_image(encoded_image,
   # Rescale to [-1,1] instead of [0, 1]
   image = tf.subtract(image, 0.5)
   image = tf.multiply(image, 2.0)
-  return image, scale_bbox
+  return image, scale_bbox, classes
 

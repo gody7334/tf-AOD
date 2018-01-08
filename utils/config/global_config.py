@@ -9,17 +9,19 @@ import numpy as np
 
 parse_args = tf.app.flags.FLAGS
 
-tf.flags.DEFINE_string("input_file_pattern", "/home/ipython/r-cnn-rnn/data/dataset/train-?????-of-00256", "File pattern of sharded TFRecord input files.")
-tf.flags.DEFINE_string("inception_checkpoint_file", "/home/ipython/r-cnn-rnn/data/pretrain_model/inception_v3.ckpt", "Path to a pretrained inception_v3 model.")
-tf.flags.DEFINE_string("train_dir", "/home/ipython/r-cnn-rnn/data/check_point", "Directory for saving and loading model checkpoints.")
+project_folder = "/home/gody7334/Project/tensorflow/ipython/AOD"
+
+tf.flags.DEFINE_string("input_file_pattern", project_folder+"/data/dataset/train-?????-of-00256", "File pattern of sharded TFRecord input files.")
+tf.flags.DEFINE_string("inception_checkpoint_file", project_folder+"/data/pretrain_model/inception_v3.ckpt", "Path to a pretrained inception_v3 model.")
+tf.flags.DEFINE_string("train_dir", project_folder+"/data/check_point", "Directory for saving and loading model checkpoints.")
 tf.flags.DEFINE_boolean("train_inception", False, "Whether to train inception submodel variables.")
 tf.flags.DEFINE_integer("number_of_steps", 1000000, "Number of training steps.")
 tf.flags.DEFINE_integer("log_every_n_steps", 10, "Frequency at which loss and global step are logged.")
 
 # evaluation
-tf.flags.DEFINE_string("eval_input_file_pattern", "/home/ipython/r-cnn-rnn/data/dataset/val-?????-of-00004", "File pattern of sharded TFRecord input files.")
-tf.flags.DEFINE_string("trained_model_checkpoint_dir", "/home/ipython/r-cnn-rnn/data/check_point", "Directory for saving and loading trained model checkpoints.")
-tf.flags.DEFINE_string("eval_dir", "/home/ipython/r-cnn-rnn/data/eval_check_point", "Directory for saving and loading evaluation checkpoints.")
+tf.flags.DEFINE_string("eval_input_file_pattern", project_folder+"/data/dataset/val-?????-of-00004", "File pattern of sharded TFRecord input files.")
+tf.flags.DEFINE_string("trained_model_checkpoint_dir", project_folder+"/data/check_point", "Directory for saving and loading trained model checkpoints.")
+tf.flags.DEFINE_string("eval_dir", project_folder+"/data/eval_check_point", "Directory for saving and loading evaluation checkpoints.")
 
 tf.logging.set_verbosity(tf.logging.INFO)
 
@@ -56,6 +58,10 @@ class Global_Config(object):
         self.caption_feature_name = "image/caption_ids"
         # Name of the SequenceExample feature list containing integer bbox.
         self.bbox_feature_name = "image/bbox"
+        # Name of the SequenceExample feature list containing integer class.
+        self.class_feature_name = "image/category"
+
+
 
         # Number of unique words in the vocab (plus 1, for <UNK>).
         # The default value is larger than the expected actual vocab size to allow
@@ -70,6 +76,9 @@ class Global_Config(object):
         # Batch size.
         self.batch_size = 16
 
+        # Target length (max time steps)
+        self.target_length = 20
+
         """Sets the default training hyperparameters."""
         # Number of examples per epoch of training data.
         # self.num_examples_per_epoch = 586363
@@ -77,11 +86,12 @@ class Global_Config(object):
 
         # Optimizer for training the model.
         self.optimizer = "SGD"
+        # self.optimizer = "Adam"
 
         # Learning rate for the initial phase of training.
-        self.initial_learning_rate = 5e-1
+        self.initial_learning_rate = 5e0
         self.learning_rate_decay_factor = 0.5
-        self.num_epochs_per_decay = 8.0
+        self.num_epochs_per_decay = 32.0
 
         # Learning rate when fine tuning the Inception v3 parameters.
         self.train_inception_learning_rate = 0.0005
@@ -150,6 +160,9 @@ class Global_Config(object):
 
         # Minimum global step to run evaluation.
         self.min_global_step = 100
+
+        # Number of classes in the dataset for classification task
+        self.num_classes = 100 # 91 in mscoco
 
     def assign_global_config(self):
         assert parse_args.train_dir, "--train_dir is required"

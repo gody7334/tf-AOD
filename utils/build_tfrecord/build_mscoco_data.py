@@ -96,7 +96,7 @@ import threading
 import dill as pickle
 
 from pprint import pprint as pp
-
+import colored_traceback.always
 
 import nltk.tokenize
 import numpy as np
@@ -112,14 +112,14 @@ tf.flags.DEFINE_string("train_captions_file", "/tmp/captions_train2014.json",
 tf.flags.DEFINE_string("val_captions_file", "/tmp/captions_val2014.json",
                        "Validation captions JSON file.")
 
-tf.flags.DEFINE_string("train_captions_pickle", "/home/ipython/r-cnn-rnn/data/annotations_pickle/captions_train2014.pickle",
+tf.flags.DEFINE_string("train_captions_pickle", "/dataset/mscoco/raw-data/annotations_pickle/captions_train2014.pickle",
                        "Training captions pickle file.")
-tf.flags.DEFINE_string("val_captions_pickle", "/home/ipython/r-cnn-rnn/data/annotations_pickle/captions_val2014.pickle",
+tf.flags.DEFINE_string("val_captions_pickle", "/dataset/mscoco/raw-data/annotations_pickle/captions_val2014.pickle",
                        "Validation captions pickle file.")
 
-tf.flags.DEFINE_string("train_bbox_pickle", "/home/ipython/r-cnn-rnn/data/annotations_pickle/bbox_train2014.pickle",
+tf.flags.DEFINE_string("train_bbox_pickle", "/dataset/mscoco/raw-data/annotations_pickle/bbox_train2014.pickle",
                        "Training captions pickle file.")
-tf.flags.DEFINE_string("val_bbox_pickle", "/home/ipython/r-cnn-rnn/data/annotations_pickle/bbox_val2014.pickle",
+tf.flags.DEFINE_string("val_bbox_pickle", "/dataset/mscoco/raw-data/annotations_pickle/bbox_val2014.pickle",
                        "Validation captions pickle file.")
 
 tf.flags.DEFINE_string("train_instances_file", "/tmp/instances_train2014.json",
@@ -153,13 +153,13 @@ tf.flags.DEFINE_integer("min_word_count", 4,
 tf.flags.DEFINE_string("word_counts_output_file", "/tmp/word_counts.txt",
                        "Output vocabulary file of word counts.")
 
-tf.flags.DEFINE_integer("num_threads", 4,
+tf.flags.DEFINE_integer("num_threads", 1,
                         "Number of threads to preprocess the images.")
 
 FLAGS = tf.flags.FLAGS
 
 ImageBboxdata = namedtuple("ImageBboxdata",
-                           ["image_id", "filename", "bboxs"])
+                           ["image_id", "filename", "categories", "bboxs", "segmentations"])
 # ImageBboxdata.__module__ = "ImageBboxdata"
 
 ImageMetadata = namedtuple("ImageMetadata",
@@ -274,9 +274,15 @@ def _to_sequence_example(image, decoder, vocab, label_type = "caption"):
           context=context, feature_lists=feature_lists)
   elif label_type == "bbox":
       assert len(image.bboxs) == 1
+      category = image.categories[0]
       bbox = image.bboxs[0]
+      segmentation = image.segmentations[0]
+
+      # segmentation label has some problem, deal with it later
       feature_lists = tf.train.FeatureLists(feature_list={
-          "image/bbox": _float_feature_list(bbox),
+          "image/category": _int64_feature_list(category),
+          "image/bbox": _float_feature_list(bbox)
+          # "image/segmentation": _float_feature_list(segmentation)
       })
       sequence_example = tf.train.SequenceExample(
           context=context, feature_lists=feature_lists)
@@ -355,14 +361,14 @@ def _process_dataset(name, images, vocab, num_shards, label_type = "caption"):
     num_shards: Integer number of shards for the output files.
   """
   # Break up each image into a separate entity for each caption.
-#   import ipdb; ipdb.set_trace()
+  import ipdb; ipdb.set_trace()
 
   if label_type == "caption":
     images = [ImageMetadata(image.image_id, image.filename, [caption])
                 for image in images for caption in image.captions]
   elif label_type == "bbox":
-    images = [ImageBboxdata(image.image_id, image.filename, [bbox])
-                for image in images for bbox in image.bboxs]
+    images = [ImageBboxdata(image.image_id, image.filename, [category], [bbox], [segmentation])
+                for image in images for category in image.categories for bbox in image.bboxs for segmentation in image.segmentations]
 
   # Shuffle the ordering of images. Make the randomization repeatable.
   random.seed(12345)
@@ -452,6 +458,14 @@ def _process_bbox(bbox):
 
   return bboxs_array
 
+def _process_category_bbox_segmentation(category, bbox, segmentation):
+  category_array = []
+  bbox_array = []
+  segmentation_array = []
+  category_array.append(category)
+  bbox_array.append(bbox)
+  segmentation_array.append(segmentation)
+  return (category_array, bbox_array, segmentation)
 
 def _process_caption(caption):
   """Processes a caption string into a list of tonenized words.
@@ -489,16 +503,21 @@ def _load_and_process_metadata(captions_file, instances_file, image_dir):
 
   id_to_filename_inst = [(x["id"], x["file_name"]) for x in instance_data["images"]]
 
-#   import ipdb; ipdb.set_trace()
   # Extract the instances. Each image_id is associated with multiple captions.
   id_to_bbox = {}
+  id_to_category = {}
+  id_to_segmentation = {}
   for annotation in instance_data["annotations"]:
     image_id = annotation["image_id"]
     bbox = annotation["bbox"]
-    #segmentation = annotation['segmentation']
+    category =annotation['category_id']
+    segmentation = annotation['segmentation']
     id_to_bbox.setdefault(image_id, [])
     id_to_bbox[image_id].append(bbox)
-    #id_to_bbox[image_id].append(segmentation)
+    id_to_category.setdefault(image_id, [])
+    id_to_category[image_id].append(category)
+    id_to_segmentation.setdefault(image_id, [])
+    id_to_segmentation[image_id].append(segmentation)
 
   # remove missing annotation in file name
   image_set = set([x[0] for x in id_to_filename_inst])
@@ -511,6 +530,11 @@ def _load_and_process_metadata(captions_file, instances_file, image_dir):
 
   assert len(id_to_filename_inst) == len(id_to_bbox)
   assert set([x[0] for x in id_to_filename_inst]) == set(id_to_bbox.keys())
+  assert len(id_to_filename_inst) == len(id_to_category)
+  assert set([x[0] for x in id_to_filename_inst]) == set(id_to_category.keys())
+  assert len(id_to_filename_inst) == len(id_to_segmentation)
+  assert set([x[0] for x in id_to_filename_inst]) == set(id_to_segmentation.keys())
+
   print("Loaded bbox metadata for %d images from %s" %
         (len(id_to_filename_inst), instances_file))
 
@@ -534,7 +558,11 @@ def _load_and_process_metadata(captions_file, instances_file, image_dir):
   for image_id, base_filename in id_to_filename_inst:
     filename = os.path.join(image_dir, base_filename)
     bboxs = _process_bbox(id_to_bbox[image_id])
-    image_metadata_bbox.append(ImageBboxdata(image_id, filename, bboxs))
+    categories, bboxs, segmentations = _process_category_bbox_segmentation(
+                                          id_to_category[image_id],
+                                          id_to_bbox[image_id],
+                                          id_to_segmentation[image_id])
+    image_metadata_bbox.append(ImageBboxdata(image_id, filename, categories, bboxs, segmentations))
     num_bbox += len(bboxs)
   print("Finished processing %d bboxs for %d images in %s" %
         (num_bbox, len(id_to_filename), instances_file,))
@@ -571,44 +599,49 @@ def main(unused_argv):
     tf.gfile.MakeDirs(FLAGS.output_dir)
 
   # Load image metadata from caption files.
-#   try:
-#     mscoco_train_dataset = pickle.load(open(FLAGS.train_captions_pickle, "rb"))
-#     mscoco_bbox_train_dataset = pickle.load(open(FLAGS.train_bbox_pickle, "rb"))
-#   except (OSError, IOError) as e:
-#     mscoco_train_dataset, mscoco_bbox_train_dataset = _load_and_process_metadata(
-#                                                     FLAGS.train_captions_file,
-#                                                     FLAGS.train_instances_file,
-#                                                     FLAGS.train_image_dir)
-#     pickle.dump(mscoco_train_dataset, open(FLAGS.train_captions_pickle, "wb"))
-#     pickle.dump(mscoco_bbox_train_dataset, open(FLAGS.train_bbox_pickle, "wb"))
+  # try:
+    # mscoco_train_dataset = pickle.load(open(FLAGS.train_captions_pickle, "rb"))
+    # mscoco_bbox_train_dataset = pickle.load(open(FLAGS.train_bbox_pickle, "rb"))
+  # except (OSError, IOError) as e:
+    # mscoco_train_dataset, mscoco_bbox_train_dataset = _load_and_process_metadata(
+                                                    # FLAGS.train_captions_file,
+                                                    # FLAGS.train_instances_file,
+                                                    # FLAGS.train_image_dir)
+    # pickle.dump(mscoco_train_dataset, open(FLAGS.train_captions_pickle, "wb"))
+    # pickle.dump(mscoco_bbox_train_dataset, open(FLAGS.train_bbox_pickle, "wb"))
 
-#   try:
-#     mscoco_val_dataset = pickle.load(open(FLAGS.val_captions_pickle, "rb"))
-#     mscoco_bbox_val_dataset = pickle.load(open(FLAGS.val_bbox_pickle, "rb"))
-#   except (OSError, IOError) as e:
-#     mscoco_val_dataset, mscoco_bbox_val_dataset = _load_and_process_metadata(
-#                                                   FLAGS.val_captions_file,
-#                                                   FLAGS.val_instances_file,
-#                                                   FLAGS.val_image_dir)
-#     pickle.dump(mscoco_val_dataset, open(FLAGS.val_captions_pickle, "wb"))
-#     pickle.dump(mscoco_bbox_val_dataset, open(FLAGS.val_bbox_pickle, "wb"))
-#
-#   mscoco_train_dataset = mscoco_train_dataset[:1000]
-#   mscoco_val_dataset = mscoco_val_dataset[:1000]
-#   mscoco_bbox_train_dataset = mscoco_bbox_train_dataset[:1000]
-#   mscoco_bbox_val_dataset = mscoco_bbox_val_dataset[:1000]
+  # try:
+    # mscoco_val_dataset = pickle.load(open(FLAGS.val_captions_pickle, "rb"))
+    # mscoco_bbox_val_dataset = pickle.load(open(FLAGS.val_bbox_pickle, "rb"))
+  # except (OSError, IOError) as e:
+    # mscoco_val_dataset, mscoco_bbox_val_dataset = _load_and_process_metadata(
+                                                  # FLAGS.val_captions_file,
+                                                  # FLAGS.val_instances_file,
+                                                  # FLAGS.val_image_dir)
+    # pickle.dump(mscoco_val_dataset, open(FLAGS.val_captions_pickle, "wb"))
+    # pickle.dump(mscoco_bbox_val_dataset, open(FLAGS.val_bbox_pickle, "wb"))
+
+  # mscoco_train_dataset = mscoco_train_dataset[:1000]
+  # mscoco_val_dataset = mscoco_val_dataset[:1000]
+  # mscoco_bbox_train_dataset = mscoco_bbox_train_dataset[:1000]
+  # mscoco_bbox_val_dataset = mscoco_bbox_val_dataset[:1000]
+
+  # pickle.dump(mscoco_train_dataset, open(FLAGS.train_captions_pickle+".1000", "wb"))
+  # pickle.dump(mscoco_bbox_train_dataset, open(FLAGS.train_bbox_pickle+".1000", "wb"))
+  # pickle.dump(mscoco_val_dataset, open(FLAGS.val_captions_pickle+".1000", "wb"))
+  # pickle.dump(mscoco_bbox_val_dataset, open(FLAGS.val_bbox_pickle+".1000", "wb"))
 
 # load whole dataset
-  mscoco_train_dataset = pickle.load(open(FLAGS.train_captions_pickle, "rb"))
-  mscoco_bbox_train_dataset = pickle.load(open(FLAGS.train_bbox_pickle, "rb"))
-  mscoco_val_dataset = pickle.load(open(FLAGS.val_captions_pickle, "rb"))
-  mscoco_bbox_val_dataset = pickle.load(open(FLAGS.val_bbox_pickle, "rb"))
+  # mscoco_train_dataset = pickle.load(open(FLAGS.train_captions_pickle, "rb"))
+  # mscoco_bbox_train_dataset = pickle.load(open(FLAGS.train_bbox_pickle, "rb"))
+  # mscoco_val_dataset = pickle.load(open(FLAGS.val_captions_pickle, "rb"))
+  # mscoco_bbox_val_dataset = pickle.load(open(FLAGS.val_bbox_pickle, "rb"))
 
 # load tiny dataset
-#   mscoco_train_dataset = pickle.load(open(FLAGS.train_captions_pickle+".1000", "rb"))
-#   mscoco_bbox_train_dataset = pickle.load(open(FLAGS.train_bbox_pickle+".1000", "rb"))
-#   mscoco_val_dataset = pickle.load(open(FLAGS.val_captions_pickle+".1000", "rb"))
-#   mscoco_bbox_val_dataset = pickle.load(open(FLAGS.val_bbox_pickle+".1000", "rb"))
+  mscoco_train_dataset = pickle.load(open(FLAGS.train_captions_pickle+".1000", "rb"))
+  mscoco_bbox_train_dataset = pickle.load(open(FLAGS.train_bbox_pickle+".1000", "rb"))
+  mscoco_val_dataset = pickle.load(open(FLAGS.val_captions_pickle+".1000", "rb"))
+  mscoco_bbox_val_dataset = pickle.load(open(FLAGS.val_bbox_pickle+".1000", "rb"))
 
   # Redistribute the MSCOCO data as follows:
   #   train_dataset = 100% of mscoco_train_dataset + 85% of mscoco_val_dataset.
@@ -620,6 +653,8 @@ def main(unused_argv):
   train_bbox_dataset = mscoco_bbox_train_dataset + mscoco_bbox_val_dataset[0:train_bbox_cutoff]
   val_bbox_dataset = mscoco_bbox_val_dataset[train_bbox_cutoff:val_bbox_cutoff]
   test_bbox_dataset = mscoco_bbox_val_dataset[val_bbox_cutoff:]
+
+  import ipdb; ipdb.set_trace()
 
   _process_dataset("train", train_bbox_dataset, None, FLAGS.train_shards, label_type = "bbox")
   _process_dataset("val", val_bbox_dataset, None, FLAGS.val_shards, label_type = "bbox")
