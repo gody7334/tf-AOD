@@ -6,6 +6,16 @@ import tensorflow as tf
 import time
 import numpy as np
 
+# import logging
+# log = logging.getLogger('tensorflow')
+# log.setLevel(logging.INFO)
+# formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# fh = logging.FileHandler('tensorflow.log')
+# fh.setLevel(logging.DEBUG)
+# fh.setFormatter(formatter)
+# log.addHandler(fh)
+
+
 # get parsing argument
 from utils.config import global_config
 from graph.build_data import Build_Data

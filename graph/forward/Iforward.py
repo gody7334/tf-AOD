@@ -74,6 +74,7 @@ class IForward(object):
         self.random_normal_initializer = tf.random_normal_initializer(mean=0.0, stddev=1.0)
         self.weight_initializer = tf.contrib.layers.xavier_initializer()
         self.const_initializer = tf.constant_initializer(0.0)
+        self.point5_initializer = tf.constant_initializer(0.5)
         self.emb_initializer = tf.random_uniform_initializer(minval=-1.0, maxval=1.0)
 
         # A global variable for training graph

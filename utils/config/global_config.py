@@ -11,7 +11,8 @@ parse_args = tf.app.flags.FLAGS
 
 project_folder = "/home/gody7334/Project/tensorflow/ipython/AOD"
 
-tf.flags.DEFINE_string("input_file_pattern", project_folder+"/data/dataset/train-?????-of-00256", "File pattern of sharded TFRecord input files.")
+# tf.flags.DEFINE_string("input_file_pattern", project_folder+"/data/dataset/train-?????-of-00256", "File pattern of sharded TFRecord input files.")
+tf.flags.DEFINE_string("input_file_pattern", project_folder+"/data/dataset/train-00000-of-00256", "File pattern of sharded TFRecord input files.")
 tf.flags.DEFINE_string("inception_checkpoint_file", project_folder+"/data/pretrain_model/inception_v3.ckpt", "Path to a pretrained inception_v3 model.")
 tf.flags.DEFINE_string("train_dir", project_folder+"/data/check_point", "Directory for saving and loading model checkpoints.")
 tf.flags.DEFINE_boolean("train_inception", False, "Whether to train inception submodel variables.")
@@ -74,7 +75,7 @@ class Global_Config(object):
         self.num_preprocess_threads = 4
 
         # Batch size.
-        self.batch_size = 16
+        self.batch_size = 10
 
         # Target length (max time steps)
         self.target_length = 20
@@ -89,9 +90,9 @@ class Global_Config(object):
         # self.optimizer = "Adam"
 
         # Learning rate for the initial phase of training.
-        self.initial_learning_rate = 5e0
-        self.learning_rate_decay_factor = 0.5
-        self.num_epochs_per_decay = 32.0
+        self.initial_learning_rate = 2.5e-2
+        self.learning_rate_decay_factor = 1.0
+        self.num_epochs_per_decay = 100.0
 
         # Learning rate when fine tuning the Inception v3 parameters.
         self.train_inception_learning_rate = 0.0005

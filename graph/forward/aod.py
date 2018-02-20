@@ -74,7 +74,7 @@ class AOD(IForward):
         self.targets = None
         self.weights = None
 
-        self.loc_sd = 0.1
+        self.loc_sd = 0.2
         self.roises_list = [] # RoI location, used to reconstuct the bbox coordinate in a image
         self.baselines_list = [] # policy baseline
         self.mean_locs_list = [] # expected location
@@ -154,9 +154,9 @@ class AOD(IForward):
         # Here bbox def: (xmid,ymid,w,h) as easy to limit the boundry(0~1) and avoid revert coor
         with tf.variable_scope('attension_region_proposal_layer',reuse=reuse):
             baseline_w = tf.get_variable('baseline_w', [self.H, self.B],initializer=self.weight_initializer)
-            baseline_b = tf.get_variable('baseline_b', [self.B], initializer=self.const_initializer)
+            baseline_b = tf.get_variable('baseline_b', [self.B], initializer=self.point5_initializer)
             mean_w = tf.get_variable('mean_w', [self.H, self.B],initializer=self.weight_initializer)
-            mean_b = tf.get_variable('mean_b', [self.B],initializer=self.const_initializer)
+            mean_b = tf.get_variable('mean_b', [self.B],initializer=self.point5_initializer)
             if(reuse==False):
                 # first set don't have baseline, mean_loc, sample_loc
                 # therefore there is no reward in the first step
@@ -173,6 +173,7 @@ class AOD(IForward):
                 # compute next location
                 # mean_loc might out of boundry
                 mean_loc = tf.matmul(h,mean_w)+mean_b
+                # mean_loc= tf.maximum(1e-10, tf.minimum(1.0,mean_loc))
                 # mean_loc = tf.stop_gradient(mean_loc)
                 self.mean_locs_list.append(mean_loc)
 
@@ -192,6 +193,7 @@ class AOD(IForward):
 
                 # sample_loc = tf.stop_gradient(sample_loc)
                 self.sampled_locs_list.append(sample_loc)
+
 
                 return sample_loc
 
@@ -289,7 +291,7 @@ class AOD(IForward):
         '''
 
         # filter iou < 0.5
-        mask = tf.stop_gradient(tf.greater(iou_input,0.2))
+        mask = tf.stop_gradient(tf.greater(iou_input,0.1))
         ious = tf.multiply(iou_input,tf.cast(mask, tf.float32))
 
         # select max and its index
@@ -297,8 +299,8 @@ class AOD(IForward):
         argmax_ious = tf.argmax(ious,1)
 
         # filter max_ious = 0, let index = num_class+1 as Background
-        obj_mask = tf.cast(tf.not_equal(max_ious,0.0), tf.int64)
-        back_mask = tf.cast(tf.equal(max_ious,0.0), tf.int64)
+        obj_mask = tf.stop_gradient(tf.cast(tf.not_equal(max_ious,0.0), tf.int64))
+        back_mask = tf.stop_gradient(tf.cast(tf.equal(max_ious,0.0), tf.int64))
 
         # get max_iou index
         N = self.NN
@@ -327,6 +329,9 @@ class AOD(IForward):
         @ return
         losses (N), batches of softmax loss between logit and label
         '''
+        # mask = tf.stop_gradient(tf.less_equal(label_input,91))
+        mask = tf.less_equal(label_input,91)
+        label_input = tf.multiply(label_input,tf.cast(mask, tf.int64))
         losses = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=label_input, logits=logit_input)
         return losses
 
@@ -390,12 +395,18 @@ class AOD(IForward):
         predict_target_prob = tf.reduce_sum(predict_class_prob*target_class_one_hot, axis=1)
         iou = self.get_iou(tf.expand_dims(target_bbox_input,axis=1),tf.expand_dims(predict_bbox_input,axis=1))
 
-        baseline_input = tf.identity(0.0)
+        # baseline_input = tf.identity(0.0)
+        baseline_input =_debug_func(baseline_input ,'baseline_input',break_point=False, to_file=True)
+
+        iou =_debug_func(iou ,'iou',break_point=False, to_file=True)
 
         # rewards
-        rewards = (tf.squeeze(iou,[1,2]) * predict_target_prob)
-        # rewards = tf.squeeze(iou,[1,2]) * 1e2
-        # baseline_input = baseline_input * 1e2
+        rewards_scale = 1e5
+        # rewards = (tf.squeeze(iou,[1,2]) * predict_target_prob)*rewards_scale
+        rewards = (tf.squeeze(iou,[1,2]))
+
+
+        rewards =_debug_func(rewards ,'rewards',break_point=False, to_file=True)
 
         self.rewards_list = []
         self.rewards_list.append(rewards)
@@ -403,17 +414,23 @@ class AOD(IForward):
         # baseline
         no_grad_b = tf.stop_gradient(baseline_input)
 
+        mean_location_input =_debug_func(mean_location_input,'mean_location_input',break_point=False, to_file=True)
+        sample_location_input =_debug_func(sample_location_input ,'sample_location_input',break_point=False, to_file=True)
         # construct schocastic policy using mean and sample location
         p_loc = gaussian_pdf(mean_location_input, sample_location_input)
+        p_loc =_debug_func(p_loc ,'p_loc',break_point=False, to_file=True)
+
         p_loc = tf.tanh(p_loc)
+        p_loc =_debug_func(p_loc ,'tanh_p_loc',break_point=False, to_file=True)
 
         # likelihood estimator
         rewards = tf.tile(tf.expand_dims(rewards,[1]), [1,4])
-        J = tf.log(p_loc + 1e-10) * (rewards - baseline_input)
+        J = tf.log(p_loc + 1e-10) * tf.reduce_sum(rewards - baseline_input+1e-10)
 
         J = tf.reduce_sum(J, 1)
-        # J = J - tf.reduce_sum(tf.square(rewards - baseline_input), 1)
+        J = J - tf.reduce_sum(tf.square(rewards - baseline_input), 1)
         # J = tf.reduce_mean(J, 0)
+        J =_debug_func(J ,'J',break_point=False, to_file=True)
         return -J
 
     def build_model(self):
@@ -445,9 +462,7 @@ class AOD(IForward):
 
             self._decode_lstm_bbox_class(h,reuse=(t!=0))
 
-
-        self.region_proposals = tf.transpose(tf.stack(region_proposals_list),(1,0))
-
+        # self.region_proposals = tf.transpose(tf.stack(region_proposals_list),(1,0))
 
 
     def get_loss(self):
@@ -461,6 +476,7 @@ class AOD(IForward):
         class_losses_list = []
         bbox_losses_list = []
         policy_losses_list = []
+        predict_bbox_full_list = []
 
         for t in range(self.T):
             predict_bbox = self.bboxes_list[t]
@@ -468,6 +484,7 @@ class AOD(IForward):
             rois = self.roises_list[t]
 
             predict_bbox_full = self._convert_bbox_to_full_image_coordinate(rois, predict_bbox)
+            predict_bbox_full_list.append(predict_bbox_full)
             iouses = self.get_iou(tf.expand_dims(predict_bbox_full,1), self.bbox_seqs)
             argmax_ious, target_class, target_bbox = self.get_argmax_ious_class_bbox(iouses, self.class_seqs, self.bbox_seqs)
 
@@ -499,11 +516,11 @@ class AOD(IForward):
         class_loss = tf.reduce_mean(class_losses)
         bbox_loss = tf.reduce_mean(bbox_losses)
         policy_loss = tf.reduce_mean(policy_losses)
-        reward = tf.reduce_mean(rewards)
+        reward = tf.reduce_sum(rewards)
 
-        batch_loss = class_loss + bbox_loss/10 + policy_loss
+        batch_loss = class_loss/10 + bbox_loss/100 + policy_loss/10000
 
-        batch_loss = self._l2_regularization(batch_loss)
+        # batch_loss = self._l2_regularization(batch_loss)
 
         self.predict_bbox = predict_bbox
         self.predict_class_logit = predict_class_logit
@@ -518,9 +535,9 @@ class AOD(IForward):
         self.policy_losses = policy_loss
         self.batch_loss = batch_loss
 
-        logits = tf.transpose(tf.stack(self.bboxes_list),(1,0,2))
+        logits = tf.transpose(tf.stack(predict_bbox_full_list),(1,0,2))
         self.logits = logits
-
+        logits =_debug_func(logits ,'logits',break_point=False, to_file=True)
         image_processing.draw_tf_bounding_boxes(self.images, logits, name="logits")
         image_processing.draw_tf_bounding_boxes(self.images, self.bbox_seqs, name="targets")
 
@@ -528,7 +545,7 @@ class AOD(IForward):
         total_loss = tf.losses.get_total_loss()
 
         # Add summaries.
-        tf.summary.scalar("losses/reward", tf.reduce_mean(reward))
+        tf.summary.scalar("losses/reward", reward)
         tf.summary.scalar("losses/class_loss", class_loss)
         tf.summary.scalar("losses/bbox_loss", bbox_loss)
         tf.summary.scalar("losses/policy_loss", policy_loss)
