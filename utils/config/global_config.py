@@ -90,7 +90,7 @@ class Global_Config(object):
         # self.optimizer = "Adam"
 
         # Learning rate for the initial phase of training.
-        self.initial_learning_rate = 2.5e-2
+        self.initial_learning_rate = 2.5e-1
         self.learning_rate_decay_factor = 1.0
         self.num_epochs_per_decay = 100.0
 

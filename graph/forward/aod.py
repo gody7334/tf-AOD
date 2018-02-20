@@ -167,6 +167,7 @@ class AOD(IForward):
             else:
                 # train a baseline_beline function
                 # baseline might out of boundry.
+                h = tf.stop_gradient(h)
                 baseline = tf.sigmoid(tf.matmul(h,baseline_w)+baseline_b)
                 self.baselines_list.append(baseline)
 
@@ -197,7 +198,7 @@ class AOD(IForward):
 
                 return sample_loc
 
-    def _ROI_pooling_layer(self, features, region_proposal):
+    def _ROI_pooling_layer(self, features, region_proposal, t):
         region_proposal = self._convert_coordinate(region_proposal, "frcnn", "bmp",dim=2)
 
         # convert from (0-1) to int coordinate
@@ -291,7 +292,7 @@ class AOD(IForward):
         '''
 
         # filter iou < 0.5
-        mask = tf.stop_gradient(tf.greater(iou_input,0.1))
+        mask = tf.stop_gradient(tf.greater(iou_input,0.2))
         ious = tf.multiply(iou_input,tf.cast(mask, tf.float32))
 
         # select max and its index
@@ -395,7 +396,7 @@ class AOD(IForward):
         predict_target_prob = tf.reduce_sum(predict_class_prob*target_class_one_hot, axis=1)
         iou = self.get_iou(tf.expand_dims(target_bbox_input,axis=1),tf.expand_dims(predict_bbox_input,axis=1))
 
-        # baseline_input = tf.identity(0.0)
+        baseline_input = tf.identity(0.0)
         baseline_input =_debug_func(baseline_input ,'baseline_input',break_point=False, to_file=True)
 
         iou =_debug_func(iou ,'iou',break_point=False, to_file=True)
@@ -404,8 +405,6 @@ class AOD(IForward):
         rewards_scale = 1e5
         # rewards = (tf.squeeze(iou,[1,2]) * predict_target_prob)*rewards_scale
         rewards = (tf.squeeze(iou,[1,2]))
-
-
         rewards =_debug_func(rewards ,'rewards',break_point=False, to_file=True)
 
         self.rewards_list = []
@@ -428,7 +427,7 @@ class AOD(IForward):
         J = tf.log(p_loc + 1e-10) * tf.reduce_sum(rewards - baseline_input+1e-10)
 
         J = tf.reduce_sum(J, 1)
-        J = J - tf.reduce_sum(tf.square(rewards - baseline_input), 1)
+        # J = J - tf.reduce_sum(tf.square(rewards - baseline_input), 1)
         # J = tf.reduce_mean(J, 0)
         J =_debug_func(J ,'J',break_point=False, to_file=True)
         return -J
@@ -453,8 +452,8 @@ class AOD(IForward):
             region_proposals = self._attension_region_proposal_layer(h,reuse=(t!=0))
             region_proposals_list.append(region_proposals)
 
-            self.glimpses = self._ROI_pooling_layer(features, region_proposals)
-            # self.glimpses = self._batch_norm(self.glimpses, mode='train', name='glimpses_features'+str(t))
+            self.glimpses = self._ROI_pooling_layer(features, region_proposals, t)
+            self.glimpses = self._batch_norm(self.glimpses, mode='train', name='bn_glimpses_features'+str(t))
             self.glimpses_project = self._project_glimpses(self.glimpses,reuse=(t!=0))
 
             with tf.variable_scope('lstm', reuse=(t != 0)):
@@ -518,7 +517,7 @@ class AOD(IForward):
         policy_loss = tf.reduce_mean(policy_losses)
         reward = tf.reduce_sum(rewards)
 
-        batch_loss = class_loss/10 + bbox_loss/100 + policy_loss/10000
+        batch_loss = class_loss/10 + bbox_loss/100 + policy_loss*1e5
 
         # batch_loss = self._l2_regularization(batch_loss)
 
