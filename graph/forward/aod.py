@@ -124,7 +124,7 @@ class AOD(IForward):
         super(AOD, self).build_image_embeddings()
 
         # TOOD experiement different layer
-        inception_layer = self.inception_end_points['Mixed_5b']
+        inception_layer = self.inception_end_points['Mixed_7c']
 
         # get depth of image embedded
         layer_shape = inception_layer.get_shape().as_list()
@@ -183,7 +183,7 @@ class AOD(IForward):
                 sample_loc = mean_loc + tf.random_normal(mean_loc.get_shape(), 0, self.loc_sd)
 
                 # Need to clip sample_loc to get the right features
-                # first clip for invalid (xmin, ymid, w, h)
+                # first clip for invalid (xmid, ymid, w, h)
                 sample_loc = tf.maximum(1e-10, tf.minimum(1.0, sample_loc))
 
                 # second clip for invalid (xmin, ymin, xmax, ymax)
@@ -195,11 +195,11 @@ class AOD(IForward):
                 # sample_loc = tf.stop_gradient(sample_loc)
                 self.sampled_locs_list.append(sample_loc)
 
-
                 return sample_loc
 
     def _ROI_pooling_layer(self, features, region_proposal, t):
         region_proposal = self._convert_coordinate(region_proposal, "frcnn", "bmp",dim=2)
+        region_proposal =_debug_func(region_proposal,'region_proposal_bmp',break_point=False, to_file=True)
 
         # convert from (0-1) to int coordinate
         xmin = tf.slice(region_proposal, [0,0],[-1,1])
@@ -208,10 +208,10 @@ class AOD(IForward):
         ymax = tf.slice(region_proposal, [0,3],[-1,1])
 
         n_idx = tf.expand_dims(tf.cast(tf.range(self.NN),tf.float32),1)
-        xmin = tf.cast(tf.floor(xmin*self.WW),tf.float32) #(n,1)
-        ymin = tf.cast(tf.floor(ymin*self.HH),tf.float32) #(n,1)
-        xmax = tf.cast(tf.ceil(xmax*self.WW),tf.float32)  #(n,1)
-        ymax = tf.cast(tf.ceil(ymax*self.HH),tf.float32)  #(n,1)
+        xmin = tf.cast(tf.floor(xmin*(self.WW-1)),tf.float32) #(n,1)
+        ymin = tf.cast(tf.floor(ymin*(self.HH-1)),tf.float32) #(n,1)
+        xmax = tf.cast(tf.ceil(xmax*(self.WW-1)),tf.float32)  #(n,1)
+        ymax = tf.cast(tf.ceil(ymax*(self.HH-1)),tf.float32)  #(n,1)
         rois = tf.concat([n_idx,xmin,ymin,xmax,ymax],1) #(n,5)
 
         # Q: pooling from 1x1 to 7x7? that all value is the same in 7x7 as region proposal is small?
@@ -220,7 +220,9 @@ class AOD(IForward):
 
         # store rois for convert the coordinate between region <=> full image
         rois = tf.concat([xmin,ymin,xmax,ymax],1)
+        rois =_debug_func(rois ,'rois_bmp',break_point=False, to_file=True)
         rois = self._convert_coordinate(rois, "bmp", "frcnn",dim=2)
+        rois =_debug_func(rois ,'rois_frcnn',break_point=False, to_file=True)
         self.roises_list.append(rois)
 
         return y
@@ -257,10 +259,10 @@ class AOD(IForward):
         rp_w = tf.slice(roises, [0,2],[-1,1])
         rp_h = tf.slice(roises, [0,3],[-1,1])
 
-        rp_xmid = rp_xmid/self.WW
-        rp_ymid = rp_ymid/self.HH
-        rp_w = rp_w/self.WW
-        rp_h = rp_h/self.HH
+        rp_xmid = rp_xmid/(self.WW-1)
+        rp_ymid = rp_ymid/(self.HH-1)
+        rp_w = rp_w/(self.WW-1)
+        rp_h = rp_h/(self.HH-1)
 
         bbox_xmid = tf.slice(bboxes, [0,0],[-1,1])
         bbox_ymid = tf.slice(bboxes, [0,1],[-1,1])
@@ -294,7 +296,7 @@ class AOD(IForward):
         '''
 
         # filter iou < 0.5
-        mask = tf.stop_gradient(tf.greater(iou_input,0.2))
+        mask = tf.stop_gradient(tf.greater(iou_input,0.1))
         ious = tf.multiply(iou_input,tf.cast(mask, tf.float32))
 
         # select max and its index
