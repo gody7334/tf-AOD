@@ -124,7 +124,7 @@ class AOD(IForward):
         super(AOD, self).build_image_embeddings()
 
         # TOOD experiement different layer
-        inception_layer = self.inception_end_points['Mixed_7c']
+        inception_layer = self.inception_end_points['Mixed_5b']
 
         # get depth of image embedded
         layer_shape = inception_layer.get_shape().as_list()
@@ -250,6 +250,8 @@ class AOD(IForward):
 
     def _convert_bbox_to_full_image_coordinate(self,roises,bboxes):
         # Todo convert logit(bbox) result from region to full image coordinate
+        roises =_debug_func(roises ,'roises',break_point=False, to_file=True)
+        bboxes =_debug_func( bboxes,'bboxes',break_point=False, to_file=True)
         rp_xmid = tf.slice(roises, [0,0],[-1,1])
         rp_ymid = tf.slice(roises, [0,1],[-1,1])
         rp_w = tf.slice(roises, [0,2],[-1,1])
@@ -356,7 +358,9 @@ class AOD(IForward):
         '''
         ious = self.get_iou(tf.expand_dims(predict_bbox_input,1),tf.expand_dims(target_bbox_input,1))
         ious = tf.squeeze(ious,[1,2])
+        mask = tf.greater(ious,0)
         iou_losses = -1.0 * tf.log(tf.clip_by_value(ious,1e-10,1))
+        iou_losses = tf.multiply(iou_losses,tf.cast(mask, tf.float32))
 
         return iou_losses
 
@@ -394,6 +398,9 @@ class AOD(IForward):
         target_class_one_hot = tf.one_hot(target_class_input, num_class_input)
         predict_class_prob = tf.nn.softmax(predict_class_input)
         predict_target_prob = tf.reduce_sum(predict_class_prob*target_class_one_hot, axis=1)
+
+        target_bbox_input =_debug_func(target_bbox_input ,'target_bbox_input',break_point=False, to_file=True)
+        predict_bbox_input =_debug_func(predict_bbox_input ,'predict_bbox_input',break_point=False, to_file=True)
         iou = self.get_iou(tf.expand_dims(target_bbox_input,axis=1),tf.expand_dims(predict_bbox_input,axis=1))
 
         baseline_input = tf.identity(0.0)
@@ -436,7 +443,6 @@ class AOD(IForward):
         features = self.features    #(N,W,H,D)
         batch_size = tf.shape(self.features)[0]
         # batch normalize feature vectors
-        features = self._batch_norm(features, mode='train', name='conv_features')
 
         h = tf.zeros([self.NN,self.H])
         c = tf.zeros([self.NN,self.H])
@@ -453,8 +459,9 @@ class AOD(IForward):
             region_proposals_list.append(region_proposals)
 
             self.glimpses = self._ROI_pooling_layer(features, region_proposals, t)
-            self.glimpses = self._batch_norm(self.glimpses, mode='train', name='bn_glimpses_features'+str(t))
+
             self.glimpses_project = self._project_glimpses(self.glimpses,reuse=(t!=0))
+            self.glimpses_project = self._batch_norm(self.glimpses_project, mode='train', name='batch_norm_glimpses_project_'+str(t))
 
             with tf.variable_scope('lstm', reuse=(t != 0)):
                 _, (c, h) = lstm_cell(inputs=self.glimpses_project, state=[c, h])
@@ -517,7 +524,7 @@ class AOD(IForward):
         policy_loss = tf.reduce_mean(policy_losses)
         reward = tf.reduce_sum(rewards)
 
-        batch_loss = class_loss/10 + bbox_loss/100 + policy_loss*1e5
+        batch_loss = class_loss/10 + bbox_loss/100 + policy_loss/10
 
         # batch_loss = self._l2_regularization(batch_loss)
 
