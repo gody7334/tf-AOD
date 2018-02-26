@@ -33,6 +33,8 @@ def main():
     elif args['mode'] == "new_train":
         print("Clean chceck point: train_dir ")
         clean_folder(global_config.global_config.train_dir)
+        print("Clean log directory")
+        clean_folder(global_config.global_config.log_dir)
         Train().run()
     elif args['mode'] == "eval":
         Evaluate().run()

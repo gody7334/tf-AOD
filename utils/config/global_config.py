@@ -24,6 +24,8 @@ tf.flags.DEFINE_string("eval_input_file_pattern", project_folder+"/data/dataset/
 tf.flags.DEFINE_string("trained_model_checkpoint_dir", project_folder+"/data/check_point", "Directory for saving and loading trained model checkpoints.")
 tf.flags.DEFINE_string("eval_dir", project_folder+"/data/eval_check_point", "Directory for saving and loading evaluation checkpoints.")
 
+# log
+tf.flags.DEFINE_string("log_dir", project_folder+"/data/log", "Directory for log tensor.")
 tf.logging.set_verbosity(tf.logging.INFO)
 
 global_config = None
@@ -41,6 +43,9 @@ class Global_Config(object):
 
         #training directory.
         self.train_dir = None
+
+        #log directory.
+        self.log_dir = None
 
         # Image format ("jpeg" or "png").
         self.image_format = "jpeg"
@@ -172,6 +177,13 @@ class Global_Config(object):
         if not tf.gfile.IsDirectory(self.train_dir):
             tf.logging.info("Creating training directory: %s", train_dir)
             tf.gfile.MakeDirs(train_dir)
+
+        assert parse_args.log_dir, "--log_dir is required"
+        # Create log directory.
+        self.log_dir=parse_args.log_dir
+        if not tf.gfile.IsDirectory(self.log_dir):
+            tf.logging.info("Creating training directory: %s", log_dir)
+            tf.gfile.MakeDirs(log_dir)
 
         # Evaluate training directory.
         self.eval_dir=parse_args.eval_dir

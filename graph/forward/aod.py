@@ -253,7 +253,7 @@ class AOD(IForward):
     def _convert_bbox_to_full_image_coordinate(self,roises,bboxes):
         # Todo convert logit(bbox) result from region to full image coordinate
         roises =_debug_func(roises ,'roises',break_point=False, to_file=True)
-        bboxes =_debug_func( bboxes,'bboxes',break_point=False, to_file=True)
+        bboxes =_debug_func( bboxes,'bboxes_regional',break_point=False, to_file=True)
         rp_xmid = tf.slice(roises, [0,0],[-1,1])
         rp_ymid = tf.slice(roises, [0,1],[-1,1])
         rp_w = tf.slice(roises, [0,2],[-1,1])
@@ -275,6 +275,7 @@ class AOD(IForward):
         bbox_h_full = rp_h*bbox_h
 
         bbox_coor_full = tf.concat([bbox_xmid_full,bbox_ymid_full,bbox_w_full,bbox_h_full],1)
+        bbox_coor_full =_debug_func(bbox_coor_full,'bbox_coor_full',break_point=False, to_file=True)
 
         return bbox_coor_full
 
@@ -360,9 +361,9 @@ class AOD(IForward):
         '''
         ious = self.get_iou(tf.expand_dims(predict_bbox_input,1),tf.expand_dims(target_bbox_input,1))
         ious = tf.squeeze(ious,[1,2])
-        mask = tf.greater(ious,0)
         iou_losses = -1.0 * tf.log(tf.clip_by_value(ious,1e-10,1))
-        iou_losses = tf.multiply(iou_losses,tf.cast(mask, tf.float32))
+        # mask = tf.greater(ious,0)
+        # iou_losses = tf.multiply(iou_losses,tf.cast(mask, tf.float32))
 
         return iou_losses
 
@@ -403,12 +404,17 @@ class AOD(IForward):
 
         target_bbox_input =_debug_func(target_bbox_input ,'target_bbox_input',break_point=False, to_file=True)
         predict_bbox_input =_debug_func(predict_bbox_input ,'predict_bbox_input',break_point=False, to_file=True)
+
         iou = self.get_iou(tf.expand_dims(target_bbox_input,axis=1),tf.expand_dims(predict_bbox_input,axis=1))
+        baseline_iou = self.get_iou(tf.expand_dims(target_bbox_input,axis=1),tf.expand_dims(baseline_input,axis=1))
+        baseline_iou = tf.squeeze(baseline_iou,[1,2])
 
-        baseline_input = tf.identity(0.0)
+        # baseline_input = tf.identity(0.0)
         baseline_input =_debug_func(baseline_input ,'baseline_input',break_point=False, to_file=True)
-
+        baseline_iou =_debug_func(baseline_iou ,'baseline_iou',break_point=False, to_file=True)
         iou =_debug_func(iou ,'iou',break_point=False, to_file=True)
+
+        # import ipdb;ipdb.set_trace()
 
         # rewards
         rewards_scale = 1e5
@@ -420,7 +426,7 @@ class AOD(IForward):
         self.rewards_list.append(rewards)
 
         # baseline
-        no_grad_b = tf.stop_gradient(baseline_input)
+        # no_grad_b = tf.stop_gradient(baseline_input)
 
         mean_location_input =_debug_func(mean_location_input,'mean_location_input',break_point=False, to_file=True)
         sample_location_input =_debug_func(sample_location_input ,'sample_location_input',break_point=False, to_file=True)
@@ -433,10 +439,11 @@ class AOD(IForward):
 
         # likelihood estimator
         rewards = tf.tile(tf.expand_dims(rewards,[1]), [1,4])
-        J = tf.log(p_loc + 1e-10) * tf.reduce_sum(rewards - baseline_input+1e-10)
+        baseline_iou = tf.tile(tf.expand_dims(baseline_iou,[1]), [1,4])
+        J = tf.log(p_loc + 1e-10) * tf.reduce_sum(rewards - baseline_iou+1e-10)
 
         J = tf.reduce_sum(J, 1)
-        # J = J - tf.reduce_sum(tf.square(rewards - baseline_input), 1)
+        J = J - tf.reduce_sum(tf.square(rewards - baseline_iou), 1)
         # J = tf.reduce_mean(J, 0)
         J =_debug_func(J ,'J',break_point=False, to_file=True)
         return -J
@@ -468,6 +475,7 @@ class AOD(IForward):
             with tf.variable_scope('lstm', reuse=(t != 0)):
                 _, (c, h) = lstm_cell(inputs=self.glimpses_project, state=[c, h])
 
+            h =_debug_func(h ,'h',break_point=False, to_file=True)
             self._decode_lstm_bbox_class(h,reuse=(t!=0))
 
         # self.region_proposals = tf.transpose(tf.stack(region_proposals_list),(1,0))
@@ -526,7 +534,7 @@ class AOD(IForward):
         policy_loss = tf.reduce_mean(policy_losses)
         reward = tf.reduce_sum(rewards)
 
-        batch_loss = class_loss/10 + bbox_loss/100 + policy_loss/10
+        batch_loss = class_loss/10 + bbox_loss/100 + policy_loss/1000000
 
         # batch_loss = self._l2_regularization(batch_loss)
 
